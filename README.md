@@ -1,6 +1,7 @@
 # ✦ Aurora Compliance
 
 ![alt text](image.png)
+<img width="868" height="484" alt="image" src="https://github.com/user-attachments/assets/f24449f9-8523-4ce5-b721-38606e7f336e" />
 
 **GraphRAG assistant for the EU AI Act** (Regulation (EU) 2024/1689), built on a Neo4j
 knowledge graph. Ask compliance questions in natural language — the agent routes between
