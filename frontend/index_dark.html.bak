@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aurora Compliance — EU AI Act GraphRAG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,500&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+:root{
+  --bg:#07081a; --bg2:#0c0e2b;
+  --aurora-teal:#4ef0d0; --aurora-violet:#8b7cf7; --aurora-pink:#f7a8e3;
+  --ink:#e9eaf6; --ink-dim:#9aa0c3;
+  --glass:rgba(255,255,255,.05); --glass-border:rgba(255,255,255,.12);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'Inter',sans-serif; font-weight:300;
+  min-height:100vh; overflow-x:hidden;
+}
+/* ---- aurora ribbon backdrop ---- */
+.aurora{
+  position:fixed; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(ellipse 90% 45% at 15% -10%, rgba(78,240,208,.16), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 85% 0%,  rgba(139,124,247,.20), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 55% 110%, rgba(247,168,227,.10), transparent 60%);
+  animation:drift 18s ease-in-out infinite alternate;
+}
+@keyframes drift{
+  0%  {transform:translateY(0) scale(1);   filter:hue-rotate(0deg)}
+  100%{transform:translateY(-30px) scale(1.06); filter:hue-rotate(18deg)}
+}
+@media (prefers-reduced-motion: reduce){ .aurora{animation:none} .shimmer{animation:none} }
+
+.wrap{position:relative; z-index:1; max-width:1100px; margin:0 auto; padding:48px 24px}
+
+/* ---- header ---- */
+.eyebrow{
+  font-size:11px; letter-spacing:.28em; text-transform:uppercase;
+  color:var(--aurora-teal); margin-bottom:14px; font-weight:500;
+}
+h1{
+  font-family:'Playfair Display',serif; font-weight:700;
+  font-size:clamp(2.4rem,6vw,4rem); line-height:1.05; margin-bottom:16px;
+}
+h1 .holo{
+  background:linear-gradient(110deg,var(--aurora-teal) 10%,var(--aurora-violet) 45%,var(--aurora-pink) 75%,var(--aurora-teal) 100%);
+  background-size:220% 100%;
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation:shine 7s linear infinite;
+}
+@keyframes shine{to{background-position:220% 0}}
+.sub{color:var(--ink-dim); max-width:56ch; font-size:1.02rem; line-height:1.65}
+.sub b{color:var(--ink); font-weight:500}
+
+/* ---- ask panel ---- */
+.panel{
+  margin-top:40px;
+  background:var(--glass); border:1px solid var(--glass-border);
+  border-radius:20px; padding:26px;
+  backdrop-filter:blur(14px);
+  box-shadow:0 0 60px rgba(139,124,247,.08), inset 0 1px 0 rgba(255,255,255,.06);
+}
+.ask-row{display:flex; gap:12px; flex-wrap:wrap}
+input[type=text]{
+  flex:1; min-width:240px;
+  background:rgba(7,8,26,.6); border:1px solid var(--glass-border);
+  border-radius:12px; padding:14px 18px; color:var(--ink);
+  font-family:'Inter',sans-serif; font-size:.95rem;
+}
+input[type=text]:focus{outline:2px solid var(--aurora-violet); outline-offset:1px; border-color:transparent}
+select{
+  background:rgba(7,8,26,.6); border:1px solid var(--glass-border);
+  border-radius:12px; padding:14px 16px; color:var(--ink-dim); font-family:'Inter',sans-serif;
+}
+button.ask{
+  border:none; border-radius:12px; padding:14px 26px; cursor:pointer;
+  font-family:'Inter',sans-serif; font-weight:600; font-size:.95rem; color:#07081a;
+  background:linear-gradient(110deg,var(--aurora-teal),var(--aurora-violet),var(--aurora-pink));
+  background-size:200% 100%;
+  transition:background-position .5s;
+}
+button.ask:hover,button.ask:focus-visible{background-position:100% 0}
+button.ask:focus-visible{outline:2px solid var(--aurora-teal); outline-offset:2px}
+.chips{display:flex; gap:8px; flex-wrap:wrap; margin-top:14px}
+.chip{
+  font-size:.78rem; color:var(--ink-dim); cursor:pointer;
+  border:1px solid var(--glass-border); border-radius:999px; padding:6px 14px;
+  background:transparent; font-family:'Inter',sans-serif;
+}
+.chip:hover{color:var(--aurora-teal); border-color:var(--aurora-teal)}
+
+/* ---- answer / graph split ---- */
+.result{display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:20px}
+@media (max-width:860px){.result{grid-template-columns:1fr}}
+.card{
+  background:var(--glass); border:1px solid var(--glass-border);
+  border-radius:20px; padding:24px; backdrop-filter:blur(14px);
+}
+.card h2{
+  font-family:'Playfair Display',serif; font-weight:500; font-size:1.15rem;
+  margin-bottom:14px; display:flex; align-items:center; gap:10px;
+}
+.strategy{
+  font-family:'JetBrains Mono',monospace; font-size:.68rem; letter-spacing:.1em;
+  color:var(--aurora-teal); border:1px solid rgba(78,240,208,.35);
+  border-radius:6px; padding:3px 8px;
+}
+#answer{font-size:.92rem; line-height:1.7; color:var(--ink-dim); white-space:pre-wrap}
+#answer .cite{color:var(--aurora-pink); font-weight:500}
+.disclaimer{margin-top:16px; font-size:.72rem; color:#5c608a}
+
+/* ---- graph ---- */
+#graph{width:100%; height:380px; border-radius:14px; background:rgba(7,8,26,.45)}
+.legend{display:flex; gap:14px; flex-wrap:wrap; margin-top:12px; font-size:.72rem; color:var(--ink-dim)}
+.legend span::before{content:"●"; margin-right:5px}
+.l-article::before{color:var(--aurora-teal)} .l-obligation::before{color:var(--aurora-violet)}
+.l-role::before{color:var(--aurora-pink)} .l-other::before{color:#5c608a}
+
+footer{margin-top:56px; font-size:.75rem; color:#494d75; line-height:1.7}
+footer a{color:var(--aurora-violet)}
+</style>
+</head>
+<body>
+<div class="aurora" aria-hidden="true"></div>
+<div class="wrap">
+
+  <p class="eyebrow">Regulation (EU) 2024/1689 · Knowledge Graph</p>
+  <h1>Aurora <span class="holo">Compliance</span></h1>
+  <p class="sub">Ask the EU AI Act anything. A GraphRAG agent routes your question through a
+  <b>Neo4j knowledge graph</b> of articles, obligations, roles, exceptions and deadlines —
+  and shows you the exact <b>path it traversed</b>, glowing like an aurora.</p>
+
+  <div class="panel">
+    <div class="ask-row">
+      <input id="q" type="text" placeholder="e.g. What must a deployer of a recruitment AI system do?" aria-label="Your question">
+      <select id="role" aria-label="Your role">
+        <option value="">Any role</option>
+        <option value="provider">Provider</option>
+        <option value="deployer">Deployer</option>
+        <option value="importer">Importer</option>
+        <option value="distributor">Distributor</option>
+      </select>
+      <button class="ask" onclick="ask()">Trace the graph</button>
+    </div>
+    <div class="chips">
+      <button class="chip" onclick="preset('What are the exceptions to the AI disclosure obligation in Article 50?')">Exceptions to Art. 50</button>
+      <button class="chip" onclick="preset('When do high-risk obligations become applicable?')">Deadlines</button>
+      <button class="chip" onclick="preset('What penalties apply to prohibited practices?')">Sanctions</button>
+      <button class="chip" onclick="preset('Is a CV screening tool high-risk?')">HR use case</button>
+    </div>
+  </div>
+
+  <div class="result">
+    <div class="card">
+      <h2>Answer <span class="strategy" id="strategy">TRAVERSAL</span></h2>
+      <div id="answer">Ask a question to trace the knowledge graph. In demo mode this page answers from an embedded sample of the graph; connect the FastAPI backend (<code>POST /ask</code>) for full hybrid GraphRAG.</div>
+      <p class="disclaimer">Informational guidance based on the official text — not legal advice.</p>
+    </div>
+    <div class="card">
+      <h2>Traversal path</h2>
+      <svg id="graph" role="img" aria-label="Knowledge graph visualization"></svg>
+      <div class="legend">
+        <span class="l-article">Article</span><span class="l-obligation">Obligation</span>
+        <span class="l-role">Role</span><span class="l-other">Exception / Deadline / Risk</span>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Source of truth: <a href="https://eur-lex.europa.eu/eli/reg/2024/1689/oj">EUR-Lex 32024R1689</a> ·
+    Structure via the AI Act Explorer · Built with Neo4j, FastAPI &amp; Claude · Demo dataset — connect backend for full 113-article graph.
+  </footer>
+</div>
+
+<script>
+/* ------- demo subgraph (mirrors seed_sample.cypher) ------- */
+const DEMO = {
+  "art50": {
+    strategy:"TRAVERSAL",
+    answer:"Under [Art. 50], providers and deployers must inform people they are interacting with an AI system, and synthetic content must be marked as such.\n\nException traced in the graph: the obligation does not apply where it is obvious from the context, or where the use is authorised by law for the detection of criminal offences.\n\nThis is a limited-risk (transparency) obligation — it applies regardless of high-risk classification.",
+    nodes:[
+      {id:"a50",label:"Article",name:"Art. 50 — Transparency obligations"},
+      {id:"o5",label:"Obligation",name:"Disclose AI interaction; mark synthetic content"},
+      {id:"rp",label:"Role",name:"provider"},{id:"rd",label:"Role",name:"deployer"},
+      {id:"e1",label:"Exception",name:"Obvious from context / law-enforcement authorisation"},
+      {id:"rc",label:"RiskCategory",name:"limited"}
+    ],
+    links:[
+      {source:"a50",target:"o5",type:"IMPOSES"},
+      {source:"o5",target:"rp",type:"APPLIES_TO"},{source:"o5",target:"rd",type:"APPLIES_TO"},
+      {source:"o5",target:"e1",type:"HAS_EXCEPTION"},{source:"o5",target:"rc",type:"CONDITIONAL_ON"}
+    ]
+  },
+  "deadlines": {
+    strategy:"TRAVERSAL",
+    answer:"Timeline traced from the graph:\n\n• 2 Feb 2025 — prohibitions [Art. 5] and AI literacy apply\n• 2 Aug 2025 — GPAI obligations [Art. 53] and governance apply\n• 2 Aug 2026 — the Act becomes fully applicable, incl. Annex III high-risk obligations [Art. 9, 10, 14, 26]\n• 2 Aug 2028 — extended transition for high-risk AI embedded in regulated products (AI omnibus)",
+    nodes:[
+      {id:"o1",label:"Obligation",name:"Risk management system"},
+      {id:"o6",label:"Obligation",name:"GPAI documentation"},
+      {id:"d1",label:"Deadline",name:"2026-08-02 — fully applicable"},
+      {id:"d2",label:"Deadline",name:"2025-08-02 — GPAI rules"},
+      {id:"a9",label:"Article",name:"Art. 9"},{id:"a53",label:"Article",name:"Art. 53"}
+    ],
+    links:[
+      {source:"a9",target:"o1",type:"IMPOSES"},{source:"o1",target:"d1",type:"EFFECTIVE_FROM"},
+      {source:"a53",target:"o6",type:"IMPOSES"},{source:"o6",target:"d2",type:"EFFECTIVE_FROM"}
+    ]
+  },
+  "sanctions": {
+    strategy:"TRAVERSAL",
+    answer:"Prohibited practices [Art. 5] are penalised by the top tier under [Art. 99]: administrative fines up to €35 million or 7 % of total worldwide annual turnover, whichever is higher.\n\nOther violations fall under the lower tier: up to €15 million or 3 % of turnover.",
+    nodes:[
+      {id:"a5",label:"Article",name:"Art. 5 — Prohibited practices"},
+      {id:"a99",label:"Article",name:"Art. 99 — Penalties"},
+      {id:"s1",label:"Sanction",name:"€35 m / 7 % turnover"}
+    ],
+    links:[
+      {source:"a99",target:"a5",type:"REFERS_TO"},
+      {source:"a5",target:"s1",type:"PENALIZED_BY"}
+    ]
+  },
+  "hr": {
+    strategy:"HYBRID",
+    answer:"Yes — recruitment and CV screening is listed in Annex III (employment & worker management), so the system is classified as high-risk [Art. 6(2)].\n\nAs a deployer you must, per [Art. 26]: use the system per the provider's instructions, assign competent human oversight, monitor operation and keep logs. The provider side carries [Art. 9] risk management, [Art. 10] data governance and [Art. 14] human-oversight design.",
+    nodes:[
+      {id:"sys",label:"AISystem",name:"Recruitment / CV screening"},
+      {id:"an3",label:"Annex",name:"Annex III"},
+      {id:"hr",label:"RiskCategory",name:"high"},
+      {id:"a26",label:"Article",name:"Art. 26 — Deployer obligations"},
+      {id:"o4",label:"Obligation",name:"Use per instructions · oversight · monitoring"},
+      {id:"rd",label:"Role",name:"deployer"}
+    ],
+    links:[
+      {source:"sys",target:"an3",type:"LISTED_IN"},{source:"sys",target:"hr",type:"CLASSIFIED_AS"},
+      {source:"a26",target:"o4",type:"IMPOSES"},{source:"o4",target:"rd",type:"APPLIES_TO"}
+    ]
+  }
+};
+function pick(q){
+  q=q.toLowerCase();
+  if(q.includes("50")||q.includes("disclos")||q.includes("transpar"))return DEMO.art50;
+  if(q.includes("when")||q.includes("deadline")||q.includes("applicab"))return DEMO.deadlines;
+  if(q.includes("penal")||q.includes("fine")||q.includes("sanction"))return DEMO.sanctions;
+  return DEMO.hr;
+}
+function preset(t){document.getElementById('q').value=t;ask();}
+function ask(){
+  const q=document.getElementById('q').value||"cv screening";
+  const d=pick(q);
+  document.getElementById('strategy').textContent=d.strategy;
+  document.getElementById('answer').innerHTML=d.answer
+    .replace(/\[Art\. [\d(),\s]+\]/g,m=>`<span class="cite">${m}</span>`);
+  drawGraph(structuredClone(d));
+}
+
+/* ------- D3 force graph with aurora glow ------- */
+const COLORS={Article:"#4ef0d0",Obligation:"#8b7cf7",Role:"#f7a8e3"};
+function drawGraph(data){
+  const svg=d3.select("#graph");svg.selectAll("*").remove();
+  const W=svg.node().clientWidth,H=svg.node().clientHeight;
+
+  const defs=svg.append("defs");
+  const glow=defs.append("filter").attr("id","glow");
+  glow.append("feGaussianBlur").attr("stdDeviation","4").attr("result","blur");
+  const m=glow.append("feMerge");
+  m.append("feMergeNode").attr("in","blur");m.append("feMergeNode").attr("in","SourceGraphic");
+  const grad=defs.append("linearGradient").attr("id","link-grad");
+  grad.append("stop").attr("offset","0%").attr("stop-color","#4ef0d0");
+  grad.append("stop").attr("offset","100%").attr("stop-color","#f7a8e3");
+
+  const sim=d3.forceSimulation(data.nodes)
+    .force("link",d3.forceLink(data.links).id(d=>d.id).distance(110))
+    .force("charge",d3.forceManyBody().strength(-320))
+    .force("center",d3.forceCenter(W/2,H/2))
+    .force("collide",d3.forceCollide(38));
+
+  const link=svg.append("g").selectAll("line").data(data.links).join("line")
+    .attr("stroke","url(#link-grad)").attr("stroke-opacity",.55).attr("stroke-width",1.6)
+    .attr("filter","url(#glow)");
+  const linkLabel=svg.append("g").selectAll("text").data(data.links).join("text")
+    .text(d=>d.type).attr("font-size","8px").attr("fill","#6f74a3")
+    .attr("font-family","JetBrains Mono,monospace").attr("text-anchor","middle");
+
+  const node=svg.append("g").selectAll("g").data(data.nodes).join("g")
+    .call(d3.drag()
+      .on("start",(e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y;})
+      .on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;})
+      .on("end",(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
+  node.append("circle").attr("r",d=>d.label==="Article"?14:10)
+    .attr("fill",d=>COLORS[d.label]||"#5c608a")
+    .attr("fill-opacity",.9).attr("filter","url(#glow)");
+  node.append("text").text(d=>d.name.length>30?d.name.slice(0,29)+"…":d.name)
+    .attr("dy",26).attr("text-anchor","middle")
+    .attr("font-size","9.5px").attr("fill","#c9cce8").attr("font-family","Inter,sans-serif");
+
+  sim.on("tick",()=>{
+    link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y)
+        .attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
+    linkLabel.attr("x",d=>(d.source.x+d.target.x)/2).attr("y",d=>(d.source.y+d.target.y)/2-4);
+    node.attr("transform",d=>`translate(${d.x},${d.y})`);
+  });
+}
+drawGraph(structuredClone(DEMO.hr));
+</script>
+</body>
+</html>

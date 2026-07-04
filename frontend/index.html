@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aurora Compliance — EU AI Act GraphRAG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,500&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+:root{
+  --bg:#07081a; --panel:#0a0b22; --inner:#060714;
+  --aurora-teal:#4ef0d0; --aurora-violet:#8b7cf7; --aurora-pink:#f7a8e3;
+  --ink:#e9eaf6; --ink-dim:#9aa0c3; --ink-faint:#5c608a;
+  --glass-border:rgba(255,255,255,.10);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:'Inter',sans-serif; font-weight:300;
+  min-height:100vh; overflow-x:hidden;
+}
+.aurora{
+  position:fixed; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(ellipse 90% 45% at 15% -10%, rgba(78,240,208,.14), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 85% 0%,  rgba(139,124,247,.18), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 55% 110%, rgba(247,168,227,.09), transparent 60%);
+  animation:drift 18s ease-in-out infinite alternate;
+}
+@keyframes drift{
+  0%  {transform:translateY(0) scale(1);   filter:hue-rotate(0deg)}
+  100%{transform:translateY(-30px) scale(1.06); filter:hue-rotate(18deg)}
+}
+@media (prefers-reduced-motion: reduce){ .aurora{animation:none} h1 .holo{animation:none} }
+
+/* ---- centered column ---- */
+.langs{position:fixed; top:16px; right:18px; z-index:2; display:flex; gap:6px}
+.langs button{background:rgba(255,255,255,.05); border:1px solid var(--glass-border); border-radius:999px;
+  color:var(--ink-dim); font-family:'JetBrains Mono',monospace; font-size:.7rem; padding:5px 12px; cursor:pointer}
+.langs button.on{color:#07081a; background:linear-gradient(110deg,var(--aurora-teal),var(--aurora-violet)); border-color:transparent}
+.wrap{position:relative; z-index:1; max-width:880px; margin:0 auto; padding:56px 20px; text-align:center}
+
+.eyebrow{
+  font-size:11px; letter-spacing:.28em; text-transform:uppercase;
+  color:var(--aurora-teal); margin-bottom:14px; font-weight:500;
+}
+h1{
+  font-family:'Playfair Display',serif; font-weight:700;
+  font-size:clamp(2.3rem,6vw,3.6rem); line-height:1.05; margin-bottom:12px;
+}
+h1 .holo{
+  background:linear-gradient(110deg,var(--aurora-teal) 10%,var(--aurora-violet) 45%,var(--aurora-pink) 75%,var(--aurora-teal) 100%);
+  background-size:220% 100%;
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation:shine 7s linear infinite;
+}
+@keyframes shine{to{background-position:220% 0}}
+.tagline{color:var(--ink-dim); font-size:1rem}
+
+/* ---- purpose strip: what is this for ---- */
+.purpose{
+  display:grid; grid-template-columns:repeat(3,1fr); gap:12px;
+  margin:28px 0 8px; text-align:left;
+}
+@media (max-width:700px){.purpose{grid-template-columns:1fr}}
+.purpose div{
+  background:rgba(255,255,255,.04); border:1px solid var(--glass-border);
+  border-radius:16px; padding:14px 16px; font-size:.8rem; line-height:1.55; color:var(--ink-dim);
+}
+.purpose b{display:block; color:var(--ink); font-weight:500; margin-bottom:4px; font-size:.84rem}
+
+/* ---- the one big rounded panel ---- */
+.panel{
+  margin-top:22px; text-align:left;
+  background:var(--panel); border:1px solid var(--glass-border);
+  border-radius:28px; padding:26px;
+  box-shadow:0 0 80px rgba(139,124,247,.10), inset 0 1px 0 rgba(255,255,255,.05);
+}
+.ask-row{display:flex; gap:10px; flex-wrap:wrap}
+input[type=text]{
+  flex:1; min-width:220px;
+  background:var(--inner); border:1px solid var(--glass-border);
+  border-radius:14px; padding:14px 18px; color:var(--ink);
+  font-family:'Inter',sans-serif; font-size:.95rem;
+}
+input[type=text]:focus{outline:2px solid var(--aurora-violet); outline-offset:1px; border-color:transparent}
+select{
+  background:var(--inner); border:1px solid var(--glass-border);
+  border-radius:14px; padding:14px 16px; color:var(--ink-dim); font-family:'Inter',sans-serif;
+}
+button.ask{
+  border:none; border-radius:14px; padding:14px 26px; cursor:pointer;
+  font-family:'Inter',sans-serif; font-weight:600; font-size:.95rem; color:#07081a;
+  background:linear-gradient(110deg,var(--aurora-teal),var(--aurora-violet),var(--aurora-pink));
+  background-size:200% 100%; transition:background-position .5s;
+}
+button.ask:hover,button.ask:focus-visible{background-position:100% 0}
+button.ask:focus-visible{outline:2px solid var(--aurora-teal); outline-offset:2px}
+button.ask:disabled{opacity:.6; cursor:wait}
+.chips{display:flex; gap:8px; flex-wrap:wrap; margin-top:14px}
+.chip{
+  font-size:.78rem; color:var(--ink-dim); cursor:pointer;
+  border:1px solid var(--glass-border); border-radius:999px; padding:6px 14px;
+  background:transparent; font-family:'Inter',sans-serif;
+}
+.chip:hover{color:var(--aurora-teal); border-color:var(--aurora-teal)}
+.status{display:flex; align-items:center; gap:8px; margin-top:14px;
+  font-family:'JetBrains Mono',monospace; font-size:.68rem; color:var(--ink-faint)}
+.status .dot{width:8px;height:8px;border-radius:50%;background:#c9cbe0}
+.status.live .dot{background:var(--aurora-teal); box-shadow:0 0 8px rgba(78,240,208,.7)}
+.status.demo .dot{background:var(--aurora-pink)}
+
+/* ---- answer / graph inside the panel ---- */
+.result{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:18px}
+@media (max-width:820px){.result{grid-template-columns:1fr}}
+.card{
+  background:var(--inner); border:1px solid var(--glass-border);
+  border-radius:20px; padding:22px;
+}
+.card h2{
+  font-family:'Playfair Display',serif; font-weight:500; font-size:1.1rem;
+  margin-bottom:12px; display:flex; align-items:center; gap:10px;
+}
+.strategy{
+  font-family:'JetBrains Mono',monospace; font-size:.66rem; letter-spacing:.1em;
+  color:var(--aurora-teal); border:1px solid rgba(78,240,208,.35);
+  border-radius:6px; padding:3px 8px;
+}
+#answer{font-size:.9rem; line-height:1.7; color:var(--ink-dim)}
+#answer .cite{color:var(--aurora-pink); font-weight:500}
+#answer strong{color:var(--ink); font-weight:500}
+#answer h3{font-family:'Playfair Display',serif; font-weight:500; color:var(--ink);
+  font-size:1rem; margin:14px 0 6px}
+#answer ul{margin:6px 0 6px 18px}
+#answer li{margin-bottom:4px}
+#answer blockquote{border-left:2px solid var(--aurora-violet); padding-left:10px;
+  color:var(--ink-faint); margin:8px 0}
+#answer p{margin-bottom:8px}
+.disclaimer{margin-top:14px; font-size:.7rem; color:var(--ink-faint)}
+
+#graph{width:100%; height:340px; border-radius:14px; background:rgba(255,255,255,.02)}
+.legend{display:flex; gap:12px; flex-wrap:wrap; margin-top:10px; font-size:.7rem; color:var(--ink-dim)}
+.legend span::before{content:"●"; margin-right:5px}
+.l-article::before{color:var(--aurora-teal)} .l-obligation::before{color:var(--aurora-violet)}
+.l-role::before{color:var(--aurora-pink)} .l-other::before{color:#5c608a}
+
+/* ---- how to read the graph ---- */
+.explainer{
+  margin-top:14px; font-size:.76rem; line-height:1.65; color:var(--ink-dim);
+  background:rgba(139,124,247,.06); border:1px solid rgba(139,124,247,.18);
+  border-radius:14px; padding:14px 16px;
+}
+.explainer b{color:var(--ink); font-weight:500}
+.explainer .k{font-family:'JetBrains Mono',monospace; font-size:.68rem; color:var(--aurora-teal)}
+
+footer{margin-top:40px; font-size:.72rem; color:var(--ink-faint); line-height:1.7}
+footer a{color:var(--aurora-violet)}
+</style>
+</head>
+<body>
+<div class="aurora" aria-hidden="true"></div>
+<div class="langs" role="group" aria-label="Language">
+  <button id="lang-en" class="on" onclick="setLang('en')">EN</button>
+  <button id="lang-sk" onclick="setLang('sk')">SK</button>
+</div>
+<div class="wrap">
+
+  <p class="eyebrow">Regulation (EU) 2024/1689 · Knowledge Graph</p>
+  <h1>Aurora <span class="holo">Compliance</span></h1>
+  <p class="tagline" id="t-tagline">The EU AI Act, answered from a knowledge graph — with the reasoning path made visible.</p>
+
+  <div class="purpose" id="t-purpose">
+    <div><b>🔍 Classify your AI system</b>“Is a CV screening tool high-risk?” — the graph maps use cases to risk categories from Annex III.</div>
+    <div><b>📋 Know your duties</b>“What must a deployer do?” — obligations are linked to your role, with exceptions and deadlines attached.</div>
+    <div><b>⚖️ See the consequences</b>“What fines apply?” — sanctions traced to the exact articles that impose them.</div>
+  </div>
+
+  <div class="panel">
+    <div class="ask-row">
+      <input id="q" type="text" placeholder="e.g. What must a deployer of a recruitment AI system do?" aria-label="Your question">
+      <select id="role" aria-label="Your role">
+        <option value="">Any role</option>
+        <option value="provider">Provider</option>
+        <option value="deployer">Deployer</option>
+        <option value="importer">Importer</option>
+        <option value="distributor">Distributor</option>
+      </select>
+      <button class="ask" id="askBtn" onclick="ask()">Trace the graph</button>
+    </div>
+    <div class="chips">
+      <button class="chip" onclick="preset('What are the exceptions to the AI disclosure obligation in Article 50?')">Exceptions to Art. 50</button>
+      <button class="chip" onclick="preset('When do high-risk obligations become applicable?')">Deadlines</button>
+      <button class="chip" onclick="preset('What penalties apply to prohibited practices?')">Sanctions</button>
+      <button class="chip" onclick="preset('Is a CV screening tool high-risk?')">HR use case</button>
+    </div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">checking backend…</span></div>
+
+    <div class="result">
+      <div class="card">
+        <h2><span id="t-answer-h">Answer</span> <span class="strategy" id="strategy">—</span></h2>
+        <div id="answer">Ask a question above, or tap one of the examples.</div>
+        <p class="disclaimer" id="t-disclaimer">Informational guidance based on the official text — not legal advice.</p>
+      </div>
+      <div class="card">
+        <h2 id="t-path-h">Traversal path</h2>
+        <svg id="graph" role="img" aria-label="Knowledge graph visualization"></svg>
+        <div class="legend">
+          <span class="l-article">Article</span><span class="l-obligation">Obligation</span>
+          <span class="l-role">Role</span><span class="l-other">Exception / Deadline / Risk / Sanction</span>
+        </div>
+        <div class="explainer" id="t-explainer">
+          <b>How to read this:</b> the law itself is the graph. Each <span class="k">Article</span> of the AI Act
+          was decomposed into <span class="k">Obligations</span> — concrete things someone must do.
+          Every obligation is connected to the <span class="k">Role</span> it binds (provider, deployer…),
+          the <span class="k">RiskCategory</span> that triggers it, its <span class="k">Exceptions</span>,
+          the <span class="k">Deadline</span> when it starts to apply, and the <span class="k">Sanction</span>
+          for breaking it. The glowing lines are the connections the agent actually followed to build the
+          answer — so you can audit its reasoning instead of trusting a black box.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Source of truth: <a href="https://eur-lex.europa.eu/eli/reg/2024/1689/oj">EUR-Lex 32024R1689</a> ·
+    Structure via the AI Act Explorer · Built with Neo4j, FastAPI &amp; Claude
+  </footer>
+</div>
+
+<script>
+const API_BASE = window.AURORA_API ||
+  (location.protocol.startsWith("http") ? location.origin : "http://localhost:8000");
+let LIVE = false;
+let LANG = "en";
+
+const I18N = {
+  en: {
+    tagline: "The EU AI Act, answered from a knowledge graph — with the reasoning path made visible.",
+    purpose: [
+      ["🔍 Classify your AI system", "“Is a CV screening tool high-risk?” — the graph maps use cases to risk categories from Annex III."],
+      ["📋 Know your duties", "“What must a deployer do?” — obligations are linked to your role, with exceptions and deadlines attached."],
+      ["⚖️ See the consequences", "“What fines apply?” — sanctions traced to the exact articles that impose them."],
+    ],
+    placeholder: "e.g. What must a deployer of a recruitment AI system do?",
+    anyRole: "Any role",
+    btn: "Trace the graph", btnBusy: "Tracing…",
+    chips: [
+      ["What are the exceptions to the AI disclosure obligation in Article 50?", "Exceptions to Art. 50"],
+      ["When do high-risk obligations become applicable?", "Deadlines"],
+      ["What penalties apply to prohibited practices?", "Sanctions"],
+      ["Is a CV screening tool high-risk?", "HR use case"],
+    ],
+    answerH: "Answer", pathH: "Traversal path",
+    ready: "Ask a question above, or tap one of the examples.",
+    disclaimer: "Informational guidance based on the official text — not legal advice.",
+    explainer: `<b>How to read this:</b> the law itself is the graph. Each <span class="k">Article</span> of the AI Act
+      was decomposed into <span class="k">Obligations</span> — concrete things someone must do.
+      Every obligation is connected to the <span class="k">Role</span> it binds (provider, deployer…),
+      the <span class="k">RiskCategory</span> that triggers it, its <span class="k">Exceptions</span>,
+      the <span class="k">Deadline</span> when it starts to apply, and the <span class="k">Sanction</span>
+      for breaking it. The glowing lines are the connections the agent actually followed to build the
+      answer — so you can audit its reasoning instead of trusting a black box.`,
+    statusLive: n => `live · ${n} articles in graph`,
+    statusDemo: "demo mode · backend offline — start uvicorn to go live",
+    emptyGraph: "No subgraph — try a compliance question like the examples above.",
+  },
+  sk: {
+    tagline: "EU AI Act zodpovedaný zo znalostného grafu — s viditeľnou cestou uvažovania.",
+    purpose: [
+      ["🔍 Klasifikuj svoj AI systém", "„Je nástroj na screening CV vysokorizikový?“ — graf mapuje prípady použitia na rizikové kategórie z Prílohy III."],
+      ["📋 Poznaj svoje povinnosti", "„Čo musí splniť nasadzujúci subjekt?“ — povinnosti sú napojené na tvoju rolu, aj s výnimkami a termínmi."],
+      ["⚖️ Pozri si dôsledky", "„Aké pokuty hrozia?“ — sankcie dohľadané k presným článkom, ktoré ich ukladajú."],
+    ],
+    placeholder: "napr. Čo musí splniť nasadzujúci subjekt náborového AI systému?",
+    anyRole: "Ľubovoľná rola",
+    btn: "Prejdi graf", btnBusy: "Prechádzam…",
+    chips: [
+      ["What are the exceptions to the AI disclosure obligation in Article 50?", "Výnimky k čl. 50"],
+      ["When do high-risk obligations become applicable?", "Termíny"],
+      ["What penalties apply to prohibited practices?", "Sankcie"],
+      ["Is a CV screening tool high-risk?", "HR use case"],
+    ],
+    answerH: "Odpoveď", pathH: "Cesta grafom",
+    ready: "Polož otázku vyššie, alebo klikni na príklad.",
+    disclaimer: "Informatívny obsah na základe oficiálneho textu — nejde o právne poradenstvo.",
+    explainer: `<b>Ako to čítať:</b> zákon samotný je ten graf. Každý <span class="k">Article</span> (článok) AI Actu
+      sme rozložili na <span class="k">Obligations</span> — konkrétne veci, ktoré niekto musí urobiť.
+      Každá povinnosť je napojená na <span class="k">Role</span>, ktorú viaže (provider, deployer…),
+      na <span class="k">RiskCategory</span>, ktorá ju spúšťa, na jej <span class="k">Exceptions</span> (výnimky),
+      <span class="k">Deadline</span> odkedy platí a <span class="k">Sanction</span> za porušenie.
+      Svietiace čiary sú spojenia, ktoré agent reálne prešiel pri tvorbe odpovede — jeho uvažovanie
+      si teda vieš skontrolovať, nemusíš veriť čiernej skrinke.`,
+    statusLive: n => `live · ${n} článkov v grafe`,
+    statusDemo: "demo režim · backend nebeží — spusti uvicorn",
+    emptyGraph: "Žiadny subgraf — skús compliance otázku ako v príkladoch vyššie.",
+  },
+};
+
+function setLang(l){
+  LANG = l;
+  document.documentElement.lang = l;
+  document.getElementById('lang-en').className = l === 'en' ? 'on' : '';
+  document.getElementById('lang-sk').className = l === 'sk' ? 'on' : '';
+  const t = I18N[l];
+  document.getElementById('t-tagline').textContent = t.tagline;
+  const cards = document.querySelectorAll('#t-purpose > div');
+  t.purpose.forEach(([h, d], i) => { cards[i].innerHTML = `<b>${h}</b>${d}`; });
+  document.getElementById('q').placeholder = t.placeholder;
+  document.querySelector('#role option[value=""]').textContent = t.anyRole;
+  document.getElementById('askBtn').textContent = t.btn;
+  const chips = document.querySelectorAll('.chip');
+  t.chips.forEach(([q, label], i) => {
+    chips[i].textContent = label;
+    chips[i].onclick = () => preset(q);
+  });
+  document.getElementById('t-answer-h').textContent = t.answerH;
+  document.getElementById('t-path-h').textContent = t.pathH;
+  document.getElementById('t-disclaimer').textContent = t.disclaimer;
+  document.getElementById('t-explainer').innerHTML = t.explainer;
+  const ans = document.getElementById('answer');
+  if (!ans.dataset.answered) ans.textContent = t.ready;
+  checkBackend();
+}
+
+async function checkBackend(){
+  const el = document.getElementById('status'), txt = document.getElementById('statusText');
+  try{
+    const r = await fetch(`${API_BASE}/health`, {signal: AbortSignal.timeout(2500)});
+    const j = await r.json();
+    LIVE = j.status === "ok";
+    el.className = "status live";
+    txt.textContent = I18N[LANG].statusLive(j.articles);
+  }catch{
+    LIVE = false;
+    el.className = "status demo";
+    txt.textContent = I18N[LANG].statusDemo;
+  }
+}
+checkBackend();
+
+function preset(t){document.getElementById('q').value=t;ask();}
+
+async function ask(){
+  const q = document.getElementById('q').value || "cv screening";
+  const role = document.getElementById('role').value || null;
+  const btn = document.getElementById('askBtn');
+  document.getElementById('answer').dataset.answered = "1";
+
+  if (LIVE){
+    btn.disabled = true; btn.textContent = I18N[LANG].btnBusy;
+    try{
+      const r = await fetch(`${API_BASE}/ask`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({question:q, role, lang:LANG})
+      });
+      const j = await r.json();
+      render(j.strategy, j.answer, normalize(j.subgraph));
+      return;
+    }catch(e){
+      console.warn("live /ask failed, falling back to demo:", e);
+      checkBackend();
+    }finally{
+      btn.disabled = false; btn.textContent = I18N[LANG].btn;
+    }
+  }
+  const d = pick(q);
+  render(d.strategy, (LANG === "sk" && d.answer_sk) ? d.answer_sk : d.answer, structuredClone(d));
+}
+
+function normalize(sub){
+  return {nodes: sub.nodes || [], links: sub.links || []};
+}
+
+/* minimal markdown → HTML (headings, bold, italics, lists, quotes, rules) */
+function md(text){
+  const esc = text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const lines = esc.split("\n");
+  let html = "", inList = false;
+  for (let ln of lines){
+    if (/^\s*[-*] /.test(ln)){
+      if(!inList){html += "<ul>"; inList = true;}
+      html += "<li>" + ln.replace(/^\s*[-*] /,"") + "</li>"; continue;
+    }
+    if (inList){html += "</ul>"; inList = false;}
+    if (/^#{1,3} /.test(ln)) html += "<h3>" + ln.replace(/^#{1,3} /,"") + "</h3>";
+    else if (/^\s*(---+|\*\*\*+)\s*$/.test(ln)) html += "";
+    else if (/^\s*&gt; /.test(ln)) html += "<blockquote>" + ln.replace(/^\s*&gt; /,"") + "</blockquote>";
+    else if (ln.trim() === "") html += "";
+    else html += "<p>" + ln + "</p>";
+  }
+  if (inList) html += "</ul>";
+  return html
+    .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g,"$1<em>$2</em>")
+    .replace(/\[Art\. [\d(),.\s]+\]/g, m => `<span class="cite">${m}</span>`);
+}
+
+function render(strategy, answer, graphData){
+  document.getElementById('strategy').textContent = strategy;
+  document.getElementById('answer').innerHTML = md(answer);
+  drawGraph(graphData);
+}
+
+/* ------- demo fallback (mirrors seed_sample.cypher) ------- */
+const DEMO = {
+  "art50": {
+    strategy:"TRAVERSAL",
+    answer_sk:"Podľa [Art. 50] musia poskytovatelia aj nasadzujúce subjekty informovať ľudí, že komunikujú s AI systémom, a syntetický obsah musí byť takto označený.\n\nVýnimka dohľadaná v grafe: povinnosť neplatí, ak je to zrejmé z kontextu, alebo ak použitie povoľuje zákon na odhaľovanie trestných činov.\n\nIde o povinnosť transparentnosti (limited risk) — platí bez ohľadu na vysokorizikovú klasifikáciu.",
+    answer:"Under [Art. 50], providers and deployers must inform people they are interacting with an AI system, and synthetic content must be marked as such.\n\nException traced in the graph: the obligation does not apply where it is obvious from the context, or where the use is authorised by law for the detection of criminal offences.\n\nThis is a limited-risk (transparency) obligation — it applies regardless of high-risk classification.",
+    nodes:[
+      {id:"a50",label:"Article",name:"Art. 50 — Transparency obligations"},
+      {id:"o5",label:"Obligation",name:"Disclose AI interaction; mark synthetic content"},
+      {id:"rp",label:"Role",name:"provider"},{id:"rd",label:"Role",name:"deployer"},
+      {id:"e1",label:"Exception",name:"Obvious from context / law-enforcement authorisation"},
+      {id:"rc",label:"RiskCategory",name:"limited"}
+    ],
+    links:[
+      {source:"a50",target:"o5",type:"IMPOSES"},
+      {source:"o5",target:"rp",type:"APPLIES_TO"},{source:"o5",target:"rd",type:"APPLIES_TO"},
+      {source:"o5",target:"e1",type:"HAS_EXCEPTION"},{source:"o5",target:"rc",type:"CONDITIONAL_ON"}
+    ]
+  },
+  "deadlines": {
+    strategy:"TRAVERSAL",
+    answer_sk:"Časová os dohľadaná z grafu:\n\n- 2. 2. 2025 — zákazy [Art. 5] a AI gramotnosť\n- 2. 8. 2025 — povinnosti pre GPAI [Art. 53] a governance\n- 2. 8. 2026 — Act plne účinný vrátane vysokorizikových povinností z Prílohy III [Art. 9, 10, 14, 26]\n- 2. 8. 2028 — predĺžený prechod pre vysokorizikové AI v regulovaných produktoch (AI omnibus)",
+    answer:"Timeline traced from the graph:\n\n- 2 Feb 2025 — prohibitions [Art. 5] and AI literacy apply\n- 2 Aug 2025 — GPAI obligations [Art. 53] and governance apply\n- 2 Aug 2026 — the Act becomes fully applicable, incl. Annex III high-risk obligations [Art. 9, 10, 14, 26]\n- 2 Aug 2028 — extended transition for high-risk AI embedded in regulated products (AI omnibus)",
+    nodes:[
+      {id:"o1",label:"Obligation",name:"Risk management system"},
+      {id:"o6",label:"Obligation",name:"GPAI documentation"},
+      {id:"d1",label:"Deadline",name:"2026-08-02 — fully applicable"},
+      {id:"d2",label:"Deadline",name:"2025-08-02 — GPAI rules"},
+      {id:"a9",label:"Article",name:"Art. 9"},{id:"a53",label:"Article",name:"Art. 53"}
+    ],
+    links:[
+      {source:"a9",target:"o1",type:"IMPOSES"},{source:"o1",target:"d1",type:"EFFECTIVE_FROM"},
+      {source:"a53",target:"o6",type:"IMPOSES"},{source:"o6",target:"d2",type:"EFFECTIVE_FROM"}
+    ]
+  },
+  "sanctions": {
+    strategy:"TRAVERSAL",
+    answer_sk:"Zakázané praktiky [Art. 5] penalizuje najvyššia sadzba podľa [Art. 99]: správne pokuty až **35 miliónov € alebo 7 %** celosvetového ročného obratu, podľa toho, čo je vyššie.\n\nOstatné porušenia spadajú do nižšej sadzby: až **15 miliónov € alebo 3 %** obratu.",
+    answer:"Prohibited practices [Art. 5] are penalised by the top tier under [Art. 99]: administrative fines up to **€35 million or 7 %** of total worldwide annual turnover, whichever is higher.\n\nOther violations fall under the lower tier: up to **€15 million or 3 %** of turnover.",
+    nodes:[
+      {id:"a5",label:"Article",name:"Art. 5 — Prohibited practices"},
+      {id:"a99",label:"Article",name:"Art. 99 — Penalties"},
+      {id:"s1",label:"Sanction",name:"€35 m / 7 % turnover"}
+    ],
+    links:[
+      {source:"a99",target:"a5",type:"REFERS_TO"},
+      {source:"a5",target:"s1",type:"PENALIZED_BY"}
+    ]
+  },
+  "hr": {
+    strategy:"HYBRID",
+    answer_sk:"Áno — nábor a screening CV je uvedený v Prílohe III (zamestnanosť a riadenie pracovníkov), takže systém je klasifikovaný ako **vysokorizikový** [Art. 6(2)].\n\nAko nasadzujúci subjekt musíš podľa [Art. 26]: používať systém podľa pokynov poskytovateľa, zabezpečiť kompetentný ľudský dohľad, monitorovať prevádzku a viesť logy. Poskytovateľ nesie [Art. 9] riadenie rizík, [Art. 10] správu dát a [Art. 14] návrh ľudského dohľadu.",
+    answer:"Yes — recruitment and CV screening is listed in Annex III (employment & worker management), so the system is classified as **high-risk** [Art. 6(2)].\n\nAs a deployer you must, per [Art. 26]: use the system per the provider's instructions, assign competent human oversight, monitor operation and keep logs. The provider side carries [Art. 9] risk management, [Art. 10] data governance and [Art. 14] human-oversight design.",
+    nodes:[
+      {id:"sys",label:"AISystem",name:"Recruitment / CV screening"},
+      {id:"an3",label:"Annex",name:"Annex III"},
+      {id:"hr",label:"RiskCategory",name:"high"},
+      {id:"a26",label:"Article",name:"Art. 26 — Deployer obligations"},
+      {id:"o4",label:"Obligation",name:"Use per instructions · oversight · monitoring"},
+      {id:"rd",label:"Role",name:"deployer"}
+    ],
+    links:[
+      {source:"sys",target:"an3",type:"LISTED_IN"},{source:"sys",target:"hr",type:"CLASSIFIED_AS"},
+      {source:"a26",target:"o4",type:"IMPOSES"},{source:"o4",target:"rd",type:"APPLIES_TO"}
+    ]
+  }
+};
+function pick(q){
+  q=q.toLowerCase();
+  if(q.includes("50")||q.includes("disclos")||q.includes("transpar"))return DEMO.art50;
+  if(q.includes("when")||q.includes("deadline")||q.includes("applicab"))return DEMO.deadlines;
+  if(q.includes("penal")||q.includes("fine")||q.includes("sanction"))return DEMO.sanctions;
+  return DEMO.hr;
+}
+
+/* ------- D3 force graph with aurora glow ------- */
+const COLORS={Article:"#4ef0d0",Obligation:"#8b7cf7",Role:"#f7a8e3",AISystem:"#f7a8e3"};
+function drawGraph(data){
+  const svg=d3.select("#graph");svg.selectAll("*").remove();
+  const W=svg.node().clientWidth,H=svg.node().clientHeight;
+
+  if(!data.nodes || !data.nodes.length){
+    svg.append("text").attr("x",W/2).attr("y",H/2).attr("text-anchor","middle")
+      .attr("fill","#5c608a").attr("font-size","12px").attr("font-family","Inter,sans-serif")
+      .text(I18N[LANG].emptyGraph);
+    return;
+  }
+
+  const defs=svg.append("defs");
+  const glow=defs.append("filter").attr("id","glow");
+  glow.append("feGaussianBlur").attr("stdDeviation","4").attr("result","blur");
+  const m=glow.append("feMerge");
+  m.append("feMergeNode").attr("in","blur");m.append("feMergeNode").attr("in","SourceGraphic");
+  const grad=defs.append("linearGradient").attr("id","link-grad");
+  grad.append("stop").attr("offset","0%").attr("stop-color","#4ef0d0");
+  grad.append("stop").attr("offset","100%").attr("stop-color","#f7a8e3");
+
+  const sim=d3.forceSimulation(data.nodes)
+    .force("link",d3.forceLink(data.links).id(d=>d.id).distance(95))
+    .force("charge",d3.forceManyBody().strength(-260))
+    .force("center",d3.forceCenter(W/2,H/2))
+    .force("collide",d3.forceCollide(42))
+    .force("bounds",()=>{
+      for(const d of data.nodes){
+        d.x=Math.max(55,Math.min(W-55,d.x));
+        d.y=Math.max(30,Math.min(H-42,d.y));
+      }
+    });
+
+  const link=svg.append("g").selectAll("line").data(data.links).join("line")
+    .attr("stroke","url(#link-grad)").attr("stroke-opacity",.55).attr("stroke-width",1.6)
+    .attr("filter","url(#glow)");
+  const linkLabel=svg.append("g").selectAll("text").data(data.links).join("text")
+    .text(d=>data.links.length>10?"":d.type).attr("font-size","8px").attr("fill","#6f74a3")
+    .attr("font-family","JetBrains Mono,monospace").attr("text-anchor","middle");
+
+  const node=svg.append("g").selectAll("g").data(data.nodes).join("g")
+    .call(d3.drag()
+      .on("start",(e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y;})
+      .on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y;})
+      .on("end",(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
+  node.append("circle").attr("r",d=>d.label==="Article"?14:10)
+    .attr("fill",d=>COLORS[d.label]||"#5c608a")
+    .attr("fill-opacity",.9).attr("filter","url(#glow)");
+  const maxLabel = data.nodes.length > 12 ? 18 : 30;
+  node.append("text").text(d=>d.name.length>maxLabel?d.name.slice(0,maxLabel-1)+"…":d.name)
+    .attr("dy",26).attr("text-anchor","middle")
+    .attr("font-size","9.5px").attr("fill","#c9cce8").attr("font-family","Inter,sans-serif");
+
+  sim.on("tick",()=>{
+    link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y)
+        .attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
+    linkLabel.attr("x",d=>(d.source.x+d.target.x)/2).attr("y",d=>(d.source.y+d.target.y)/2-4);
+    node.attr("transform",d=>`translate(${d.x},${d.y})`);
+  });
+}
+drawGraph(structuredClone(DEMO.hr));
+</script>
+</body>
+</html>
