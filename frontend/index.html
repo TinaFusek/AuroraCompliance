@@ -194,7 +194,9 @@ footer a{color:var(--aurora-violet)}
       <button class="chip" onclick="preset('What penalties apply to prohibited practices?')">Sanctions</button>
       <button class="chip" onclick="preset('Is a CV screening tool high-risk?')">HR use case</button>
     </div>
-    <div class="status" id="status"><span class="dot"></span><span id="statusText">checking backend…</span></div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">checking backend…</span>
+      <button class="chip" id="tracesBtn" onclick="toggleTraces()" style="margin-left:auto">🛰 Traces</button>
+    </div>
 
     <div class="result">
       <div class="card">
@@ -217,6 +219,47 @@ footer a{color:var(--aurora-violet)}
           the <span class="k">Deadline</span> when it starts to apply, and the <span class="k">Sanction</span>
           for breaking it. The glowing lines are the connections the agent actually followed to build the
           answer — so you can audit its reasoning instead of trusting a black box.
+        </div>
+      </div>
+    </div>
+
+    <div id="tracesPanel" style="display:none; margin-top:18px">
+      <div class="result">
+        <div class="card">
+          <h2>🔥 Hot-spots <span class="strategy" id="traceTotal">0 traces</span>
+            <span class="strategy" id="gdsBadge" style="margin-left:6px">GDS</span></h2>
+          <div id="hotspots" style="font-size:.85rem; line-height:1.9; color:var(--ink-dim)"></div>
+          <h2 style="margin-top:18px">🧬 Clusters <span style="font-size:.7rem;color:var(--ink-faint)">(node similarity)</span></h2>
+          <div id="clusters" style="font-size:.78rem; line-height:1.7; color:var(--ink-dim)"></div>
+          <h2 style="margin-top:18px">Recent runs</h2>
+          <div id="recentTraces" style="font-size:.78rem; line-height:1.7; color:var(--ink-dim)"></div>
+        </div>
+        <div class="card">
+          <h2>🧭 Ask about traces <span class="strategy">meta-GraphRAG</span></h2>
+          <div class="ask-row" style="margin-bottom:10px">
+            <input id="traceQ" type="text" placeholder="e.g. What do the empty-context runs have in common?">
+            <button class="ask" onclick="askTrace()" id="traceAskBtn">Ask</button>
+          </div>
+          <div class="chips" style="margin-bottom:6px">
+            <button class="chip" onclick="presetTrace('What do the empty-context runs have in common?')">Empty runs</button>
+            <button class="chip" onclick="presetTrace('Which articles does the agent rely on most?')">Reliance</button>
+            <button class="chip" onclick="presetTrace('Summarize traces about GPAI transparency')">GPAI traces</button>
+          </div>
+          <div id="traceAnswer" style="font-size:.85rem; line-height:1.7; color:var(--ink-dim); min-height:1.4em"></div>
+          <h2 style="margin-top:18px">Agent behaviour map</h2>
+          <svg id="traceGraph" style="width:100%; height:340px; border-radius:14px; background:rgba(255,255,255,.02)" role="img"></svg>
+          <div class="legend">
+            <span style="color:var(--aurora-teal)">&#9679; Article</span>
+            <span style="color:var(--aurora-violet)">&#9679; Trace (query)</span>
+            <span style="color:#f77">&#9679; Empty trace</span>
+          </div>
+          <div class="explainer">
+            <b>What you see:</b> every question Aurora answered is a <span class="k">Trace</span> node,
+            linked to the <span class="k">Articles</span> its reasoning visited. Clusters = question types
+            behaving alike. Red = runs where retrieval found nothing (troubleshooting candidates).
+            The app is observing itself — and above, you can <em>ask</em> it about that behaviour directly,
+            instead of reading every trace by hand.
+          </div>
         </div>
       </div>
     </div>
@@ -401,6 +444,131 @@ function render(strategy, answer, graphData){
   document.getElementById('strategy').textContent = strategy;
   document.getElementById('answer').innerHTML = md(answer);
   drawGraph(graphData);
+}
+
+function presetTrace(t){ document.getElementById('traceQ').value = t; askTrace(); }
+
+async function askTrace(){
+  const q = document.getElementById('traceQ').value.trim();
+  if(!q) return;
+  const btn = document.getElementById('traceAskBtn');
+  const out = document.getElementById('traceAnswer');
+  btn.disabled = true; btn.textContent = '…';
+  out.innerHTML = '<em>Thinking over the trace graph…</em>';
+  try{
+    const r = await fetch(`${API_BASE}/ask_trace`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:q})
+    });
+    const j = await r.json();
+    out.innerHTML = `<span class="strategy" style="margin-bottom:6px;display:inline-block">${j.mode} · ${j.n_traces_used} traces</span><br>` + md(j.answer);
+  }catch(e){
+    out.innerHTML = '<em>Trace-ask failed — backend offline?</em>';
+    console.warn('ask_trace failed:', e);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Ask';
+  }
+}
+
+/* ---------- Traces panel (agent observability) ---------- */
+let TRACES_OPEN = false;
+
+async function toggleTraces(){
+  const panel = document.getElementById('tracesPanel');
+  TRACES_OPEN = !TRACES_OPEN;
+  panel.style.display = TRACES_OPEN ? 'block' : 'none';
+  document.getElementById('tracesBtn').textContent = TRACES_OPEN ? '\u2715 Close traces' : '\ud83d\udef0 Traces';
+  if (TRACES_OPEN) await loadTraces();
+}
+
+async function loadTraces(){
+  try{
+    const r = await fetch(`${API_BASE}/traces`);
+    const j = await r.json();
+    document.getElementById('traceTotal').textContent = `${j.total} traces`;
+
+    const badge = document.getElementById('gdsBadge');
+    badge.textContent = j.gds_active ? 'GDS · PageRank live' : 'GDS off · plain counts';
+    badge.style.borderColor = j.gds_active ? 'rgba(78,240,208,.5)' : 'rgba(255,255,255,.15)';
+    badge.style.color = j.gds_active ? 'var(--aurora-teal)' : 'var(--ink-faint)';
+
+    const scoreKey = j.gds_active ? 'pagerank' : 'visits';
+    const maxV = Math.max(1, ...(j.hotspots.map(h=>h[scoreKey]||0)));
+    document.getElementById('hotspots').innerHTML = j.hotspots.length
+      ? j.hotspots.map(h=>{
+          const val = h[scoreKey] || 0;
+          const w = Math.round(100*val/maxV);
+          return `<div title="${(h.title||'').replace(/"/g,'')}">Art. ${h.article}
+            <span style="display:inline-block;height:9px;width:${w}%;max-width:70%;
+              background:linear-gradient(90deg,var(--aurora-teal),var(--aurora-violet));
+              border-radius:5px;vertical-align:middle;margin:0 6px"></span>${val}${j.gds_active?'':'\u00d7'}</div>`;
+        }).join('')
+      : '<em>No traces yet \u2014 ask Aurora a few questions first.</em>';
+
+    document.getElementById('clusters').innerHTML = (j.clusters && j.clusters.length)
+      ? j.clusters.map(c=>`<div>sim=${c.sim} &nbsp;\u201c${(c.q1||'').slice(0,32)}\u201d ~ \u201c${(c.q2||'').slice(0,32)}\u201d</div>`).join('')
+      : '<em>No similar pairs yet \u2014 need more traces, or GDS is off.</em>';
+
+    document.getElementById('recentTraces').innerHTML = j.recent.length
+      ? j.recent.map(t=>{
+          const flag = t.empty ? ' style="color:#f77"' : '';
+          return `<div${flag}>[${t.strategy}\u00b7${t.lang}] ${t.duration_ms}ms \u00b7 ${t.n_visited} hits \u2014 \u201c${(t.question||'').slice(0,55)}\u201d${t.empty?' \u26a0 empty':''}</div>`;
+        }).join('')
+      : '<em>\u2014</em>';
+
+    drawTraceGraph(j.graph);
+  }catch(e){
+    document.getElementById('hotspots').innerHTML = '<em>Backend offline or /traces failed.</em>';
+    console.warn('traces load failed:', e);
+  }
+}
+
+function drawTraceGraph(data){
+  const svg = d3.select('#traceGraph'); svg.selectAll('*').remove();
+  const W = svg.node().clientWidth, H = svg.node().clientHeight;
+  if(!data.nodes || !data.nodes.length){
+    svg.append('text').attr('x',W/2).attr('y',H/2).attr('text-anchor','middle')
+      .attr('fill','#5c608a').attr('font-size','12px').attr('font-family','Inter,sans-serif')
+      .text('No trace graph yet \u2014 ask a few questions, then reopen.');
+    return;
+  }
+  const defs = svg.append('defs');
+  const glow = defs.append('filter').attr('id','tglow');
+  glow.append('feGaussianBlur').attr('stdDeviation','3').attr('result','blur');
+  const m = glow.append('feMerge');
+  m.append('feMergeNode').attr('in','blur'); m.append('feMergeNode').attr('in','SourceGraphic');
+
+  const color = d => d.label==='Article' ? '#4ef0d0' : (d.empty ? '#f77' : '#8b7cf7');
+  const sim = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(data.links).id(d=>d.id).distance(70))
+    .force('charge', d3.forceManyBody().strength(-160))
+    .force('center', d3.forceCenter(W/2,H/2))
+    .force('collide', d3.forceCollide(26))
+    .force('bounds', ()=>{ for(const d of data.nodes){
+      d.x=Math.max(35,Math.min(W-35,d.x)); d.y=Math.max(22,Math.min(H-30,d.y)); }});
+
+  const link = svg.append('g').selectAll('line').data(data.links).join('line')
+    .attr('stroke', d=>d.type==='vector' ? '#f7a8e3' : '#4ef0d0')
+    .attr('stroke-opacity',.35).attr('stroke-width',1.1);
+
+  const node = svg.append('g').selectAll('g').data(data.nodes).join('g')
+    .call(d3.drag()
+      .on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y;})
+      .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;})
+      .on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
+  node.append('circle')
+    .attr('r', d=>d.label==='Article'?11:7)
+    .attr('fill', color).attr('fill-opacity',.9).attr('filter','url(#tglow)');
+  node.append('title').text(d=>d.name + (d.strategy?` [${d.strategy}]`:''));
+  node.filter(d=>d.label==='Article').append('text')
+    .text(d=>d.name).attr('dy',22).attr('text-anchor','middle')
+    .attr('font-size','8.5px').attr('fill','#c9cce8').attr('font-family','Inter,sans-serif');
+
+  sim.on('tick',()=>{
+    link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
+        .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+    node.attr('transform',d=>`translate(${d.x},${d.y})`);
+  });
 }
 
 /* ------- demo fallback (mirrors seed_sample.cypher) ------- */
