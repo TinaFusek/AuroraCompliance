@@ -1,7 +1,5 @@
 # Aurora Compliance
 
-**Ask the EU AI Act a question in plain language — and get an answer that shows its work. Then ask the assistant about its own reasoning.**
-
 Aurora Compliance is a bilingual (EN/SK) GraphRAG assistant over Regulation (EU) 2024/1689 (the EU AI Act). The law itself is a knowledge graph: every article is decomposed into concrete obligations, connected to the roles they bind, the risk categories that trigger them, their exceptions, deadlines, and sanctions. Questions are answered by **traversing the graph**, and every answer ships with the exact subgraph it walked to build it.
 
 What makes this more than a retrieval demo: **every question Aurora answers becomes a node in the same graph.** The app logs its own reasoning as it happens, then runs graph analytics over that log — so instead of reading transcripts by hand, you can ask the system about its own behaviour.
