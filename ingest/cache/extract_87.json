@@ -1,1 +1,0 @@
-{"obligations": [{"id": "OBL-ART87-1", "summary": "Reporting of infringements of the EU AI Act and protection of persons reporting such infringements shall be governed by Directive (EU) 2019/1937 (the Whistleblower Protection Directive).", "roles": ["provider", "deployer", "importer", "distributor"], "risk_category": "null", "exceptions": [], "references": [87]}]}

@@ -12,3 +12,5 @@ venv/
 *.dos
 *.png
 !screenshots/*.png
+
+ingest/cache/
