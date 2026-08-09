@@ -6,9 +6,11 @@ What makes this more than a retrieval demo: **every question Aurora answers beco
 
 
 ---
-![alt text](image-1.png)
+<img width="1240" height="2325" alt="Snímka obrazovky_10-7-2026_16246_127 0 0 1" src="https://github.com/user-attachments/assets/b29b6ab0-80dd-4670-9fef-0bdf7613254e" />
+<img width="1240" height="1108" alt="shared image (1)" src="https://github.com/user-attachments/assets/76ff3c5f-fc5c-47d7-bb5b-7a4d9ecf1567" />
+
 ---
-![alt text](image2-1.png)
+
 ---
 
 ## What it does
