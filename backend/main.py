@@ -8,17 +8,24 @@ GraphRAG agent with three retrieval strategies routed per-question:
 
 Endpoints:
   POST /ask                 {question, role?}   → answer + citations + subgraph
+  POST /ask_trace           {question}          → meta-GraphRAG over the agent's own traces
   GET  /graph/article/{n}                       → neighbourhood subgraph for viz
+  GET  /traces              ?limit=             → trace analytics (GDS hotspots + clusters)
   GET  /health
 """
 
+import json
 import os
+import time
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from neo4j import GraphDatabase
 from pydantic import BaseModel
 
@@ -41,6 +48,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Aurora Compliance", lifespan=lifespan)
+# Open CORS is fine while the API and the frontend are served from the same
+# local process. Restrict allow_origins before putting this on a public host.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -66,8 +75,13 @@ Question: {q}"""
 
 
 def route(question: str) -> tuple[str, str]:
-    import json as _json
+    """Pick a retrieval strategy and get an English query for retrieval.
 
+    Falls back to (HYBRID, original question) whenever the router's reply cannot
+    be trusted: HYBRID runs both retrieval branches, so a routing failure costs
+    latency rather than recall. The fallback is deliberate — but it is the only
+    thing this except should ever catch, which is why the clause is narrow.
+    """
     msg = llm.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=200,
@@ -75,10 +89,12 @@ def route(question: str) -> tuple[str, str]:
     )
     raw = msg.content[0].text.strip().removeprefix("```json").removesuffix("```").strip()
     try:
-        j = _json.loads(raw)
+        j = json.loads(raw)
         strategy = j.get("strategy", "HYBRID").upper()
         query_en = j.get("query_en") or question
-    except _json.JSONDecodeError:
+    except (json.JSONDecodeError, AttributeError):
+        # JSONDecodeError: not JSON at all. AttributeError: valid JSON of the
+        # wrong shape (a list, or "strategy": null) — .get()/.upper() blow up.
         strategy, query_en = "HYBRID", question
     if strategy not in ("TRAVERSAL", "VECTOR", "HYBRID"):
         strategy = "HYBRID"
@@ -124,23 +140,9 @@ RETURN CASE WHEN src:Article THEN src.number ELSE NULL END AS article,
        src.title AS title, src.url AS url, c.text AS chunk, score
 """
 
-SUBGRAPH_QUERY = """
-MATCH (a:Article) WHERE a.number IN $articles
-OPTIONAL MATCH p = (a)-[rel:IMPOSES|REFERS_TO|PENALIZED_BY]->(x)
-OPTIONAL MATCH p2 = (a)-[:IMPOSES]->(:Obligation)-[rel2:APPLIES_TO|HAS_EXCEPTION|CONDITIONAL_ON|EFFECTIVE_FROM]->(y)
-WITH collect(p) + collect(p2) AS paths
-UNWIND paths AS path
-WITH DISTINCT path WHERE path IS NOT NULL
-UNWIND nodes(path) AS n
-WITH collect(DISTINCT {id: elementId(n), label: labels(n)[0],
-     name: coalesce(a_title(n), n.title, n.summary, n.name, toString(n.number), n.description, n.id)}) AS ns, path
-UNWIND relationships(path) AS r
-RETURN ns AS nodes,
-       collect(DISTINCT {source: elementId(startNode(r)), target: elementId(endNode(r)), type: type(r)}) AS links
-"""
-
-
 def embed(text: str) -> list[float]:
+    # Imported lazily: the OpenAI client is only needed on VECTOR/HYBRID routes,
+    # and keeping it out of module scope lets the app boot without OPENAI_API_KEY.
     from openai import OpenAI
 
     return OpenAI().embeddings.create(model="text-embedding-3-small", input=[text]).data[0].embedding
@@ -173,6 +175,8 @@ def get_subgraph(article_numbers: list[int], max_nodes: int = 18) -> dict:
 
     with driver.session() as s:
         for rec in s.run(q, articles=article_numbers):
+            if len(seen) >= max_nodes:
+                break  # hard cap across all articles, not per article
             add(rec["a"])
             for path in rec["paths"]:
                 if len(seen) >= max_nodes:
@@ -203,9 +207,6 @@ GRAPH CONTEXT:
 
 @app.post("/ask")
 def ask(body: Ask):
-    import time
-    import uuid
-
     t_start = time.time()
     strategy, query_en = route(body.question)
     if body.mode in ("TRAVERSAL", "VECTOR", "HYBRID"):
@@ -216,7 +217,6 @@ def ask(body: Ask):
     with driver.session() as s:
         if strategy in ("TRAVERSAL", "HYBRID"):
             rows = list(s.run(TRAVERSAL_QUERY, q=query_en, role=body.role))
-            top_score = rows[0]["score"] if rows else 0.0
             for rec in rows:
                 # Relevance floor: keep the strongest hit only if it clears the floor.
                 # Everything weaker is incidental keyword overlap — drop it so that an
@@ -242,6 +242,9 @@ def ask(body: Ask):
                 src = f"Article {rec['article']}" if rec["article"] is not None else f"Annex {rec['annex']}"
                 context_parts.append(f"{src} — {rec['title']}: {rec['chunk']}")
 
+    # The answer language is steered by a prompt line, not by a separate model call:
+    # retrieval already ran on the English translation, so only generation differs.
+    sk_line = "ANSWER IN SLOVAK. Keep legal terms of art and [Art. N] citations as-is.\n"
     msg = llm.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1200,
@@ -249,7 +252,7 @@ def ask(body: Ask):
             "role": "user",
             "content": ANSWER_PROMPT.format(
                 role_line=(f"USER ROLE: {body.role}\n" if body.role else "")
-                + ("ANSWER IN SLOVAK. Keep legal terms of art and [Art. N] citations as-is.\n" if body.lang == "sk" else ""),
+                + (sk_line if body.lang == "sk" else ""),
                 question=body.question,
                 context="\n\n".join(context_parts) or "(no matches)",
             ),
@@ -257,7 +260,7 @@ def ask(body: Ask):
     )
 
     # ---- trace logging: record this query's reasoning as a graph ----
-    log_trace(
+    trace_logged = log_trace(
         trace_id=str(uuid.uuid4())[:8],
         question=body.question,
         query_en=query_en,
@@ -275,6 +278,7 @@ def ask(body: Ask):
         "citations": sorted(set(article_numbers)),
         "citations_ranked": list(dict.fromkeys(article_numbers)),  # relevance order, strongest first
         "retrieval_empty": len(context_parts) == 0,
+        "trace_logged": trace_logged,  # false = this run is missing from the trace graph
         "subgraph": get_subgraph(article_numbers[:3]),
     }
 
@@ -291,9 +295,15 @@ UNWIND $hits AS hit
 """
 
 
-def log_trace(trace_id, question, query_en, strategy, lang, hits, n_context, duration_ms):
+def log_trace(trace_id, question, query_en, strategy, lang, hits, n_context, duration_ms) -> bool:
     """Record one /ask run as a Trace node linked to the articles it visited.
-    Failures here must never break the user-facing answer."""
+
+    Failures here must never break the user-facing answer, so the except is
+    deliberately broad. The trade-off: a failed write means this run is simply
+    absent from the trace graph, which would make later trace analytics quietly
+    incomplete. Hence the bool — /ask returns it, so a degraded run is visible
+    in the response instead of only in stdout.
+    """
     try:
         with driver.session() as s:
             s.run(
@@ -303,8 +313,10 @@ def log_trace(trace_id, question, query_en, strategy, lang, hits, n_context, dur
                 duration_ms=duration_ms, empty=(n_context == 0),
                 hits=[{"article": a, "branch": b} for a, b in hits],
             )
+        return True
     except Exception as e:  # noqa: BLE001
         print(f"[trace] logging failed (non-fatal): {e}")
+        return False
 
 
 @app.get("/graph/article/{n}")
@@ -316,10 +328,17 @@ GDS_GRAPH_NAME = "trace_graph_live"
 
 
 def gds_available(s) -> bool:
+    """Capability probe: is the GDS plugin installed on this Neo4j?
+
+    Broad except on purpose — an unknown-function error, a permissions error and
+    a dropped connection all mean the same thing here: do not attempt GDS. The
+    result is surfaced to the UI as `gds_active`, so the degraded path is visible
+    rather than silent.
+    """
     try:
         s.run("RETURN gds.version()").single()
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 — see docstring
         return False
 
 
@@ -449,6 +468,14 @@ Question: {q}"""
 
 
 def route_trace_question(question: str) -> tuple[str, str]:
+    """Classify a question about the agent's own traces into a retrieval mode.
+
+    Falls back to (AGGREGATE, "") when the reply cannot be parsed. Note that this
+    fallback is NOT free: AGGREGATE reads the 15 most recent traces, so a silent
+    fallback turns "most relied-on article" into "most recent article" once the
+    trace graph grows. The except clause is therefore kept narrow on purpose —
+    anything other than a malformed reply should crash loudly and be seen.
+    """
     msg = llm.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=150,
@@ -456,10 +483,12 @@ def route_trace_question(question: str) -> tuple[str, str]:
     )
     raw = msg.content[0].text.strip().removeprefix("```json").removesuffix("```").strip()
     try:
-        j = _json.loads(raw)
+        j = json.loads(raw)
         mode = j.get("mode", "AGGREGATE").upper()
         keyword = j.get("keyword", "")
-    except Exception:  # noqa: BLE001
+    except (json.JSONDecodeError, AttributeError):
+        # Was `except Exception`, which swallowed a NameError here for months and
+        # made every trace question degrade to AGGREGATE without a single symptom.
         mode, keyword = "AGGREGATE", ""
     if mode not in ("SPECIFIC", "AGGREGATE", "EMPTY_ONLY", "HOTSPOT"):
         mode = "AGGREGATE"
@@ -506,10 +535,12 @@ TRACE DATA:
 def ask_trace(body: AskTrace):
     mode, keyword = route_trace_question(body.question)
     context_parts = []
+    n_rows = 0  # real rows retrieved; context_parts may also hold a "nothing found" note
 
     with driver.session() as s:
         if mode == "EMPTY_ONLY":
             rows = list(s.run(TRACE_EMPTY_QUERY))
+            n_rows = len(rows)
             for r in rows:
                 context_parts.append(f"[{r['strategy']}] empty run at {r['ts']}: \"{r['question']}\"")
             if not rows:
@@ -517,11 +548,13 @@ def ask_trace(body: AskTrace):
 
         elif mode == "HOTSPOT":
             rows = list(s.run(TRACE_HOTSPOT_QUERY))
+            n_rows = len(rows)
             for r in rows:
                 context_parts.append(f"Art. {r['article']} — {r['title']}: visited {r['visits']}x")
 
         else:  # SPECIFIC or AGGREGATE — both pull matching/recent traces with their paths
             rows = list(s.run(TRACE_CONTEXT_QUERY, kw=keyword))
+            n_rows = len(rows)
             for r in rows:
                 visited = ", ".join(f"Art.{v['article']}({v['branch']})" for v in r["visited"] if v["article"])
                 context_parts.append(
@@ -543,8 +576,11 @@ def ask_trace(body: AskTrace):
         }],
     )
 
+    # HOTSPOT returns one row per article, the other modes one row per trace, so
+    # the unit is reported alongside the count instead of always saying "traces".
     return {"mode": mode, "keyword": keyword, "answer": msg.content[0].text,
-            "n_traces_used": len(context_parts)}
+            "n_traces_used": n_rows,
+            "context_label": "articles" if mode == "HOTSPOT" else "traces"}
 
 
 @app.get("/health")
@@ -554,11 +590,10 @@ def health():
     return {"status": "ok", "articles": count}
 
 
-# ---- serve the frontend from the same server (must come after API routes) ----
-from pathlib import Path
-
-from fastapi.staticfiles import StaticFiles
-
+# ---- serve the frontend from the same server ----
+# The mount must come after the API routes: it catches "/" and everything under
+# it, so any route declared later would be shadowed. Only the mount needs to be
+# down here — the imports it uses live at the top of the file with the rest.
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 

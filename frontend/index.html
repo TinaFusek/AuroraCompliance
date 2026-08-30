@@ -226,7 +226,7 @@ footer a{color:var(--aurora-violet)}
     <div id="tracesPanel" style="display:none; margin-top:18px">
       <div class="result">
         <div class="card">
-          <h2>🔥 Hot-spots <span class="strategy" id="traceTotal">0 traces</span>
+          <h2 style="white-space:nowrap">🔥 Hot-spots <span class="strategy" id="traceTotal">0 traces</span>
             <span class="strategy" id="gdsBadge" style="margin-left:6px">GDS</span></h2>
           <div id="hotspots" style="font-size:.85rem; line-height:1.9; color:var(--ink-dim)"></div>
           <h2 style="margin-top:18px">🧬 Clusters <span style="font-size:.7rem;color:var(--ink-faint)">(node similarity)</span></h2>
@@ -461,7 +461,7 @@ async function askTrace(){
       body: JSON.stringify({question:q})
     });
     const j = await r.json();
-    out.innerHTML = `<span class="strategy" style="margin-bottom:6px;display:inline-block">${j.mode} · ${j.n_traces_used} traces</span><br>` + md(j.answer);
+    out.innerHTML = `<span class="strategy" style="margin-bottom:6px;display:inline-block">${j.mode} · ${j.n_traces_used} ${j.context_label || 'traces'}</span><br>` + md(j.answer);
   }catch(e){
     out.innerHTML = '<em>Trace-ask failed — backend offline?</em>';
     console.warn('ask_trace failed:', e);
